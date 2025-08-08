@@ -1,9 +1,13 @@
 import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 import cv2
 import numpy as np
 import mediapipe as mp
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score, confusion_matrix
 import joblib
 import matplotlib.pyplot as plt
+import seaborn as sns
 
 # Initialize MediaPipe Pose
 mp_pose = mp.solutions.pose
@@ -45,53 +49,72 @@ def extract_features(image_path):
         ))
     return angles
 
-# Function to test a single image
-def test_single_image(image_path):
-    # Load the model
-    model = joblib.load(r"C:\Users\Sushant Kabra\Desktop\NEW PROJECT\IMAGE RELATED\yoga_pose_model.pkl")
+# Load dataset and extract features
+def load_dataset(dataset_path):
+    X, y = [], []
+    for pose_name in os.listdir(dataset_path):
+        pose_dir = os.path.join(dataset_path, pose_name)
+        if not os.path.isdir(pose_dir):
+            continue
+        for img_file in os.listdir(pose_dir):
+            img_path = os.path.join(pose_dir, img_file)
+            features = extract_features(img_path)
+            if features:
+                X.append(features)
+                y.append(pose_name)
+    return X, y
 
-    # Extract features
-    features = extract_features(image_path)
-    if not features:
-        print("Pose landmarks not detected or feature extraction failed.")
-        return
+# ===================== MAIN LOGIC =====================
+if __name__ == "__main__":
+    # Get dataset paths from user
+    train_path = r"C:\Users\Sushant Kabra\Desktop\NEW PROJECT\DATASET\TRAIN"
+    test_path = r"C:\Users\Sushant Kabra\Desktop\NEW PROJECT\DATASET\TEST"
 
-    # Predict the pose
-    pose_name = model.predict([features])[0]
-    print(f"Predicted Pose: {pose_name}")
 
-    # Get the ideal angles for the pose (you can manually define them for each pose class)
-    ideal_angles = {
-        "TreePose": [45, 60, 35, 60],  # Example ideal angles, replace with actual ones
-        "DownwardDogPose": [30, 55, 45, 60],
-        "WarriorPose": [60, 70, 40, 65],
-        # Add other poses and their ideal angles
-    }
 
-    # Show ideal angles vs predicted angles
-    print("Calculated Angles from Image:")
-    for i, angle in enumerate(features):
-        print(f"Angle {i+1}: {angle:.2f}°")
 
-    print("\nIdeal Angles:")
-    for i, ideal in enumerate(ideal_angles.get(pose_name, [])):
-        print(f"Ideal Angle {i+1}: {ideal}°")
+    print("\nLoading training data...")
+    X_train, y_train = load_dataset(train_path)
 
-    # Show the image with landmarks and angles (for visualization)
-    image = cv2.imread(image_path)
-    image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    results = pose.process(image_rgb)
+    print("Loading test data...")
+    X_test, y_test = load_dataset(test_path)
+
+    print(f"Training samples: {len(X_train)}, Test samples: {len(X_test)}")
+
+    # Train model
+    print("\nTraining model...")
+    model = RandomForestClassifier(n_estimators=100, random_state=42)
+    model.fit(X_train, y_train)
+
+    # Save model
+    joblib.dump(model, "yoga_pose_model.pkl")
+    print("Model saved as yoga_pose_model.pkl")
+
+    # Prediction and Evaluation
+    y_pred = model.predict(X_test)
+    accuracy = accuracy_score(y_test, y_pred)
+    print(f"\n✅ Model Accuracy: {accuracy*100:.2f}%")
+
+    # Confusion Matrix
+    cm = confusion_matrix(y_test, y_pred, labels=model.classes_)
     
-    if results.pose_landmarks:
-        landmarks = results.pose_landmarks.landmark
-        for landmark in landmarks:
-            x, y = int(landmark.x * image.shape[1]), int(landmark.y * image.shape[0])
-            cv2.circle(image, (x, y), 5, (0, 255, 0), -1)
-    
-    # Display the image with landmarks
-    cv2.imshow(f"Pose: {pose_name}", image)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(cm, annot=True, fmt='d', xticklabels=model.classes_, yticklabels=model.classes_, cmap="YlGnBu")
+    plt.title("Confusion Matrix")
+    plt.xlabel("Predicted")
+    plt.ylabel("Actual")
+    plt.tight_layout()
+    plt.show()
 
-# Test the function with a specific image
-test_single_image(r"C:\Users\Sushant Kabra\Desktop\NEW PROJECT\DATASET\TEST\tree\00000000.jpg")
+    # Bar Graph for Correct vs Incorrect Predictions
+    correct = sum(y_pred[i] == y_test[i] for i in range(len(y_test)))
+    incorrect = len(y_test) - correct
+
+    plt.figure(figsize=(6, 4))
+    plt.bar(["Correct", "Incorrect"], [correct, incorrect], color=["green", "red"])
+    plt.title("Correct vs Incorrect Predictions")
+    plt.ylabel("Number of Predictions")
+    plt.tight_layout()
+    plt.show()
+
+    pose.close()
